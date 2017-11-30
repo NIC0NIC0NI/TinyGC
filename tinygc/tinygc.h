@@ -1,6 +1,7 @@
 #ifndef _TINYGC_H_
 #define _TINYGC_H_
 #include <type_traits>
+#include <iostream>
 #include <list>
 
 namespace TinyGC
@@ -47,7 +48,7 @@ namespace TinyGC
 			}
 		}
 	protected:
-		void GCMarkSub(GCObject* sub) {
+		void GCMarkSub(GCObject* sub) noexcept {
 			if(sub != nullptr){
 				sub->GCMark();
 			}
@@ -57,7 +58,6 @@ namespace TinyGC
 		bool _Mark;
 		GCObject *_Next;
 
-		
 		friend class GC;
 	};
 
@@ -79,10 +79,10 @@ namespace TinyGC
 			this->data = o;
 			return *this;
 		}
-		operator T&() { return this->get(); }
-		operator const T&() const { return this->get(); }
-		T& get() { return data; }
-		const T& get() const { return data; }
+		operator T&()  noexcept { return this->get(); }
+		operator const T&() const noexcept { return this->get(); }
+		T& get() noexcept { return data; }
+		const T& get() const noexcept { return data; }
 
 	private:
 		T data;
@@ -139,15 +139,15 @@ namespace TinyGC
 			const GCRootPtrBase* observed;
 			GC *master;
 		public:
-			GCRootObserver(const GCRootPtrBase* p, GC *master): 
+			GCRootObserver(const GCRootPtrBase* p, GC *master) noexcept :
 				observed(p), master(master){
 			}
 
-			void reset(const GCRootPtrBase* newRoot = nullptr) {
+			void reset(const GCRootPtrBase* newRoot = nullptr) noexcept {
 				observed = newRoot;
 			}
 
-			const GCRootPtrBase* get() const {
+			const GCRootPtrBase* get() const noexcept {
 				return observed;
 			}
 
@@ -177,7 +177,7 @@ namespace TinyGC
 				ptr(root.ptr), observer(&root.observer->createNew(this)){}
 				
 			// move construction, does not have to create a new observer again
-			GCRootPtrBase(GCRootPtrBase && root): 
+			GCRootPtrBase(GCRootPtrBase && root) noexcept: 
 				ptr(root.ptr), observer(root.observer) {
 				root.observer = nullptr;
 				observer->reset(this);
@@ -214,17 +214,18 @@ namespace TinyGC
 			: GCRootPtrBase(gcrp) {
 			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
 		}
-		GCRootPtr(GCRootPtr<_GCTy> && gcrp)
+		GCRootPtr(GCRootPtr<_GCTy> && gcrp)  noexcept
 			: GCRootPtrBase(std::move(gcrp)) {}
 
 		template <typename Object>
-		GCRootPtr(GCRootPtr<Object> && gcrp)
+		GCRootPtr(GCRootPtr<Object> && gcrp)  noexcept
 			: GCRootPtrBase(std::move(gcrp)) {
 			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
 		}
 
-		GCRootPtr<_GCTy>& operator=(const GCRootPtr<_GCTy> & gcrp) {
-			this->ptr = gcrp.ptr;
+
+		GCRootPtr<_GCTy>& operator=(std::nullptr_t) {
+			this->ptr = nullptr;
 			return *this;
 		}
 
@@ -235,12 +236,72 @@ namespace TinyGC
 			return *this;
 		}
 
+		template <typename Object>
+		GCRootPtr<_GCTy>& operator=(Object* gcrp) noexcept {
+			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
+			this->ptr = gcrp;
+			return *this;
+		}
+
+		template <typename Object>
+		void reset(Object* gcrp) noexcept {
+			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
+			this->ptr = gcrp;
+		}
+
+		void reset() noexcept {  this->ptr = nullptr;  }
+
+		void swap(GCRootPtr<_GCTy>& r) noexcept {
+			auto tmp = r.ptr;
+			r.ptr = this->ptr;
+			this->ptr = tmp;
+		}
+
 		/* Does not propagate `const` by default */
-		_GCTy* get() const { return reinterpret_cast<_GCTy*>(ptr); }
-		_GCTy* operator->() const { return get(); }
-		_GCTy& operator*() const { return *get(); }
-		operator _GCTy*() const { return get(); }
+		_GCTy* get() const noexcept { return reinterpret_cast<_GCTy*>(ptr); }
+		_GCTy* operator->() const noexcept { return get(); }
+		_GCTy& operator*() const noexcept { return *get(); }
+		operator _GCTy*() const noexcept { return get(); }
 	};
+
+	template<typename ObjectType>
+	inline std::ostream& operator<<(std::ostream& out, const GCRootPtr<ObjectType>& p) {
+		return out << (*p);
+	}
+
+#define DEFINE_OPERATOR(type, op) \
+	template<typename Left, typename Right>\
+	inline type operator op(const GCRootPtr<Left>& left, const GCRootPtr<Right>& right) noexcept {\
+		return left.get() op right.get();\
+	}\
+	template<typename Left, typename Right>\
+	inline type operator op(const GCRootPtr<Left>& left, Right *right) noexcept {\
+		return left.get() op right;\
+	}\
+	template<typename Left, typename Right>\
+	inline type operator op(Left *left, const GCRootPtr<Right>& right) noexcept {\
+		return left op right.get();\
+	}\
+	template<typename Left>\
+	inline type operator op(const GCRootPtr<Left>& left, std::nullptr_t) noexcept {\
+		return left.get() op nullptr; \
+	}\
+	template<typename Right>\
+	inline type operator op(std::nullptr_t, const GCRootPtr<Right>& right) noexcept {\
+		return nullptr op right.get(); \
+	}
+
+	DEFINE_OPERATOR(bool, ==)
+	DEFINE_OPERATOR(bool, !=)
+	DEFINE_OPERATOR(bool, >)
+	DEFINE_OPERATOR(bool, <)
+	DEFINE_OPERATOR(bool, >=)
+	DEFINE_OPERATOR(bool, <=)
+	DEFINE_OPERATOR(std::ptrdiff_t, - )
+
+#undef DEFINE_OPERATOR
+#undef CHECK_POINTER_CONVERTIBLE
+#undef CHECK_GCOBJECT_TYPE
 }
 
 #endif

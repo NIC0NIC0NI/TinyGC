@@ -18,7 +18,7 @@ namespace TinyGC
 	}
 
 	void GC::sweep() {
-		GCObject* newObjectHead = nullptr; // Linked list of not collected Objects
+		GCObject* newObjectHead = nullptr; // Not collected Objects
 		GCObject* next;
 		for(GCObject* p = objectHead; p != nullptr; p = next){
 			next = p->_Next;
