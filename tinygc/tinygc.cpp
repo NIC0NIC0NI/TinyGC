@@ -3,43 +3,36 @@
 namespace TinyGC
 {
 	void GC::mark() {
-		for(auto iter = observers.begin(), end = observers.end(); iter != end; ){
-			auto root_pp = iter->get();
+		for(auto prev = observerList.before_begin(), 
+					cur = observerList.begin(),
+					end = observerList.end(); cur != end; ) {
+
+			auto root_pp = cur->get();
 			if(root_pp != nullptr) {  // if false, observer invalidated
 				auto root = root_pp->ptr;
 				if(root != nullptr) {  // if false, GCRootPtr is null
 					root->GCMark();
 				}
-				++iter;
+				++prev, ++cur;
 			} else { // remove invalidated observer
-				iter = observers.erase(iter);
+				cur = observerList.erase_after(prev);
 			}
 		}
 	}
 
 	void GC::sweep() {
-		GCObject* newObjectHead = nullptr; // Not collected Objects
+		GCObject* notCollectedHead = nullptr; // Not collected Objects
 		GCObject* next;
-		for(GCObject* p = objectHead; p != nullptr; p = next){
+		for(GCObject* p = objectListHead; p != nullptr; p = next){
 			next = p->_Next;
 			if (p->_Mark) {
 				p->_Mark = false;
-				p->_Next = newObjectHead;
-				newObjectHead = p;
+				p->_Next = notCollectedHead;
+				notCollectedHead = p;
 			} else {
 				delete p;
 			}
 		}
-		objectHead = newObjectHead;
-	}
-
-	void GC::addObject(GCObject *p) {
-		p->_Next = objectHead;
-		objectHead = p;
-	}
-
-	details::GCRootObserver& GC::addRoot(const details::GCRootPtrBase* p) {
-		observers.emplace_back(p, this);
-		return observers.back();
+		objectListHead = notCollectedHead;
 	}
 }

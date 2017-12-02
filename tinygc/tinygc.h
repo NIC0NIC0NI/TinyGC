@@ -2,7 +2,7 @@
 #define _TINYGC_H_
 #include <type_traits>
 #include <iostream>
-#include <list>
+#include <forward_list>
 
 namespace TinyGC
 {
@@ -48,7 +48,7 @@ namespace TinyGC
 			}
 		}
 	protected:
-		void GCMarkSub(GCObject* sub) noexcept {
+		static void GCMarkSub(GCObject* sub) noexcept {
 			if(sub != nullptr){
 				sub->GCMark();
 			}
@@ -96,7 +96,7 @@ namespace TinyGC
 	class GC
 	{
 	public:
-		GC() : objectHead(nullptr) {}
+		GC() : objectListHead(nullptr) {}
 		~GC() {
 			sweep();
 		}
@@ -119,13 +119,19 @@ namespace TinyGC
 			return newObject<GCValue<T>>(std::forward<Args>(args)...);
 		}
 
-		details::GCRootObserver& addRoot(const details::GCRootPtrBase* p);
-
+		details::GCRootObserver& addRoot(const details::GCRootPtrBase* p) {
+			observerList.emplace_front(p, this);
+			return observerList.front();
+		}
 	private:
-		GCObject* objectHead;
-		std::list<details::GCRootObserver> observers;
+		void addObject(GCObject *p) {
+			p->_Next = objectListHead;
+			objectListHead = p;
+		}
 		
-		void addObject(GCObject *p);
+		GCObject* objectListHead;
+		std::forward_list<details::GCRootObserver> observerList;
+
 		void mark();
 		void sweep();
 	};
@@ -224,29 +230,30 @@ namespace TinyGC
 		}
 
 
-		GCRootPtr<_GCTy>& operator=(std::nullptr_t) {
+		GCRootPtr<_GCTy>& operator=(std::nullptr_t) noexcept {
 			this->ptr = nullptr;
 			return *this;
 		}
 
 		template <typename Object>
-		GCRootPtr<_GCTy>& operator=(const GCRootPtr<Object> & gcrp) {
+		GCRootPtr<_GCTy>& operator=(const GCRootPtr<Object> & gcrp) noexcept {
 			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
 			this->ptr = gcrp.ptr;
 			return *this;
 		}
 
+		// NOTICE: *objp MUST be allocated by the same GC
 		template <typename Object>
-		GCRootPtr<_GCTy>& operator=(Object* gcrp) noexcept {
+		GCRootPtr<_GCTy>& operator=(Object* objp) noexcept {
 			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
-			this->ptr = gcrp;
+			this->ptr = objp;
 			return *this;
 		}
 
 		template <typename Object>
-		void reset(Object* gcrp) noexcept {
+		void reset(Object* objp) noexcept {
 			CHECK_POINTER_CONVERTIBLE(Object, _GCTy);
-			this->ptr = gcrp;
+			this->ptr = objp;
 		}
 
 		void reset() noexcept {  this->ptr = nullptr;  }
