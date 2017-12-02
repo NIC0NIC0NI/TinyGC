@@ -9,9 +9,15 @@ void println(const std::string &msg) {
 struct Point : public TinyGC::GCObject
 {
 	Point(TinyGC::GCValue<int> *x, TinyGC::GCValue<int> *y)
-		: x(x), y(y) {}
+		: x(x), y(y) {
+		println("New Point");
+	}
+	Point(const Point &another)
+		: x(another.x), y(another.y) {
+		println("New Point");
+	}
 	~Point() {
-		println("Release Point " +  to_string());
+		println("Release Point");
 	}
 
 	std::string to_string() const {
@@ -21,7 +27,7 @@ struct Point : public TinyGC::GCObject
 	TinyGC::GCValue<int> *x, *y;
 
 protected:
-	void GCMarkAllSub() override {
+	void GCMarkAllSub() override  {
 		GCMarkSub(x);
 		GCMarkSub(y);
 	}
@@ -30,9 +36,11 @@ protected:
 struct DoublePoint : public TinyGC::GCObject
 {
 	DoublePoint(Point *p0, Point *p1)
-		: p0(p0), p1(p1) {}
+		: p0(p0), p1(p1) {
+		println("New DoublePoint");
+	}
 	~DoublePoint() {
-		println("Release DoublePoint " + to_string());
+		println("Release DoublePoint");
 	}
 
 	std::string to_string() const {
@@ -51,9 +59,11 @@ protected:
 struct AnotherDoublePoint : public Point
 {
 	AnotherDoublePoint(Point *p0, Point *p1)
-		: Point(*p0), p1(p1) {}
+		: Point(*p0), p1(p1) {
+		println("New AnotherDoublePoint");
+	}
 	~AnotherDoublePoint() {
-		println("Release AnotherDoublePoint " + to_string());
+		println("Release AnotherDoublePoint");
 	}
 
 	std::string to_string() const {
@@ -71,43 +81,50 @@ protected:
 
 struct Test
 {
+	Test() {
+		println("New Test");
+	}
 	~Test() {
 		println("Release Test");
 	}
 };
 
-template<typename DP>
-TinyGC::GCRootPtr<DP> make_double_point(TinyGC::GC &GC, int x1, int y1, int x2, int y2) {
-	return GC.newObject<DP>(
-		GC.newObject<Point>(
-			GC.newValue<int>(x1), 
-			GC.newValue<int>(y1)), 
-		GC.newObject<Point>(
-			GC.newValue<int>(x2), 
-			GC.newValue<int>(y2)));
+TinyGC::GCRootPtr<Point> make_point(TinyGC::GC &GC, int x, int y) {
+	return GC.newObject<Point>(
+			GC.newValue<int>(x),
+			GC.newValue<int>(y));
 }
 
 int main(void)
 {
-	TinyGC::GC GC;
-
-	auto dp = make_double_point<DoublePoint>(GC, 1, 2, 3, 4);
-
 	{
-		auto tdp = make_double_point<AnotherDoublePoint>(GC, 1, 2, 3, 4);
-		auto tdp2 = tdp;
+		TinyGC::GC GC;
+
+		auto p1 = make_point(GC, 1, 2);
+		auto p2 = make_point(GC, 3, 4);
+		auto p3 = make_point(GC, 5, 6);
+
+		auto dp = GC.newObject<DoublePoint>(p1, p2);
+
 		{
-			auto ttdp = GC.newValue<Test>();
-			tdp2->p1 = nullptr;
+			auto tdp = GC.newObject<AnotherDoublePoint>(p3, p1);
+			auto tdp2 = tdp;
+			{
+				auto ttdp = GC.newValue<Test>();
+			}
+			p1 = nullptr;
+			p2 = nullptr;
+			p3 = nullptr;
+			if (p3 == nullptr) {
+				println("GC Start");
+				GC.collect();
+				println("GC End");
+			}
 		}
+
 		println("GC Start");
 		GC.collect();
 		println("GC End");
 	}
-
-	println("GC Start");
-	GC.collect();
-	println("GC End");
-
 	return 0;
 }

@@ -12,6 +12,7 @@ namespace TinyGC
 	class GCObject;
 	template <typename T>
 	class GCValue;
+	class GC;
 	template <typename _GCTy>
 	class GCRootPtr;
 
@@ -41,12 +42,7 @@ namespace TinyGC
 		GCObject() : _Mark(false) {}
 		virtual ~GCObject() {}
 
-		void GCMark() {
-			if (!this->_Mark) {
-				this->_Mark = true;
-				GCMarkAllSub();
-			}
-		}
+		
 	protected:
 		static void GCMarkSub(GCObject* sub) noexcept {
 			if(sub != nullptr){
@@ -55,6 +51,13 @@ namespace TinyGC
 		}
 		virtual void GCMarkAllSub() {}
 	private:
+		void GCMark() {
+			if (!this->_Mark) {
+				this->_Mark = true;
+				GCMarkAllSub();
+			}
+		}
+
 		bool _Mark;
 		GCObject *_Next;
 
