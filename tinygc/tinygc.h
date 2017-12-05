@@ -1,7 +1,8 @@
 #ifndef _TINYGC_H_
 #define _TINYGC_H_
 #include <type_traits>
-#include <iostream>
+#include <ostream>
+#include <chrono>
 #include <forward_list>
 
 namespace TinyGC
@@ -39,27 +40,43 @@ namespace TinyGC
 	class GCObject
 	{
 	public:
-		GCObject() : _Mark(false) {}
+		GCObject() : _mark(false) {}
 		virtual ~GCObject() {}
 
-		
 	protected:
-		static void GCMarkSub(GCObject* sub) noexcept {
+		static void GCMarkOneSubChecked(GCObject* sub) {
 			if(sub != nullptr){
 				sub->GCMark();
 			}
 		}
+		template<typename T>
+		static void GCMarkOneSub(T* sub) {
+			CHECK_GCOBJECT_TYPE(T);
+			GCMarkOneSubChecked(const_cast<typename std::remove_cv<T>::type*>(sub));
+		}
+		template<typename ... T>
+		static void GCMarkSub(T *... sub) {
+			auto forceEvaluate = { (GCMarkOneSub<T>(sub), 0) ... };
+		}
+
 		virtual void GCMarkAllSub() {}
+
+#define GCOBJECT(Type, Base, ...) \
+		void GCMarkAllSub() override { \
+			Base::GCMarkAllSub();\
+			GCMarkSub(__VA_ARGS__);\
+		}
+
 	private:
 		void GCMark() {
-			if (!this->_Mark) {
-				this->_Mark = true;
+			if (!this->_mark) {
+				this->_mark = true;
 				GCMarkAllSub();
 			}
 		}
 
-		bool _Mark;
-		GCObject *_Next;
+		GCObject *_next;
+		bool _mark;
 
 		friend class GC;
 	};
@@ -78,10 +95,12 @@ namespace TinyGC
 		explicit GCValue(Args &&... args)
 			: data(std::forward<Args>(args)...) {}
 
-		GCValue& operator=(const T &o) {
-			this->data = o;
+		template<typename ArgType>
+		GCValue& operator=(ArgType&& o) {
+			this->data = std::forward<ArgType>(o);
 			return *this;
 		}
+
 		operator T&()  noexcept { return this->get(); }
 		operator const T&() const noexcept { return this->get(); }
 		T& get() noexcept { return data; }
@@ -91,7 +110,22 @@ namespace TinyGC
 		T data;
 	};
 
-	
+	//===================================
+	// * Struct GCStatistics
+	//===================================
+	struct GCStatistics {
+		typedef std::chrono::steady_clock Clock;
+		typedef std::chrono::time_point<Clock> TimePoint;
+		typedef decltype(std::declval<TimePoint>() - std::declval<TimePoint>()) Duration;
+
+		GCStatistics(): hasValue(false) {}
+
+		Duration elapsedTime;
+		TimePoint endTime;
+		std::size_t collected;
+		std::size_t notCollected;
+		bool hasValue;
+	};
 
 	//===================================
 	// * Class GC
@@ -99,20 +133,19 @@ namespace TinyGC
 	class GC
 	{
 	public:
-		GC() : objectListHead(nullptr) {}
+		GC() : objectListHead(nullptr), objectNum(0) {}
 		~GC() {
 			sweep();
 		}
 
-		void collect() {
-			mark();
-			sweep();
+		bool checkPoint() {
+			return mayCollect();
 		}
 
 		template <typename T, typename... Args>
 		GCRootPtr<T> newObject(Args &&... args) {
 			CHECK_GCOBJECT_TYPE(T);
-			T *p = new T(std::forward<Args>(args)...);
+			auto p = allocateConstruct<T>(std::forward<Args>(args)...);
 			addObject(p);
 			return GCRootPtr<T>(p, this);
 		}
@@ -128,15 +161,34 @@ namespace TinyGC
 		}
 	private:
 		void addObject(GCObject *p) {
-			p->_Next = objectListHead;
+			p->_next = objectListHead;
 			objectListHead = p;
+			++objectNum;
 		}
-		
+
+		// reserved to implement allocators
+		template <typename T, typename... Args>
+		T* allocateConstruct(Args &&... args) {
+			return new T(std::forward<Args>(args)...);
+		}
+
+		// reserved to implement allocators
+		void destroyDeallocate(GCObject *obj) {
+			delete obj;
+		}
+
 		GCObject* objectListHead;
+		std::size_t objectNum;
+
 		std::forward_list<details::GCRootObserver> observerList;
 
+		GCStatistics lastGC;
+
 		void mark();
-		void sweep();
+		void sweep();	
+		void collect();
+		bool shouldCollect() const ;
+		bool mayCollect();
 	};
 
 	namespace details {
@@ -273,9 +325,10 @@ namespace TinyGC
 		_GCTy& operator*() const noexcept { return *get(); }
 		operator _GCTy*() const noexcept { return get(); }
 	};
-
-	template<typename ObjectType>
-	inline std::ostream& operator<<(std::ostream& out, const GCRootPtr<ObjectType>& p) {
+	
+	template<typename ObjectType, typename CharT, typename Traits>
+	std::basic_ostream<CharT, Traits>&
+    operator<<( std::basic_ostream<CharT, Traits>& out, const GCRootPtr<ObjectType>& p) {
 		return out << (*p);
 	}
 
@@ -308,10 +361,10 @@ namespace TinyGC
 	DEFINE_OPERATOR(bool, >=)
 	DEFINE_OPERATOR(bool, <=)
 	DEFINE_OPERATOR(std::ptrdiff_t, - )
+}
 
 #undef DEFINE_OPERATOR
 #undef CHECK_POINTER_CONVERTIBLE
 #undef CHECK_GCOBJECT_TYPE
-}
 
 #endif

@@ -24,15 +24,47 @@ namespace TinyGC
 		GCObject* notCollectedHead = nullptr; // Not collected Objects
 		GCObject* next;
 		for(GCObject* p = objectListHead; p != nullptr; p = next){
-			next = p->_Next;
-			if (p->_Mark) {
-				p->_Mark = false;
-				p->_Next = notCollectedHead;
+			next = p->_next;
+			if (p->_mark) {
+				p->_mark = false;
+				p->_next = notCollectedHead;
 				notCollectedHead = p;
 			} else {
-				delete p;
+				destroyDeallocate(p);
+				--objectNum;
 			}
 		}
 		objectListHead = notCollectedHead;
+	}
+
+	void GC::collect() {
+		auto totalNum = objectNum;
+		auto start = GCStatistics::Clock::now();
+
+		mark();
+		sweep();
+
+		auto end = GCStatistics::Clock::now();
+		auto notCollected = objectNum;
+
+		lastGC.elapsedTime = end - start;
+		lastGC.endTime = end;
+		lastGC.collected =  totalNum - notCollected; 
+		lastGC.notCollected =  notCollected;
+		lastGC.hasValue =  true;
+	}
+
+	bool GC::shouldCollect() const {
+		return !lastGC.hasValue || (lastGC.elapsedTime.count() * lastGC.notCollected 
+				< (GCStatistics::Clock::now() - lastGC.endTime).count() 
+				* lastGC.collected);
+	}
+
+	bool GC::mayCollect(){
+		if (shouldCollect()) {
+			collect();
+			return true;
+		}
+		return false;
 	}
 }

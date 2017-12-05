@@ -1,9 +1,10 @@
-#include <cstdio>
+#include <iostream>
 #include <string>
 #include "../tinygc/tinygc.h"
 
-void println(const std::string &msg) {
-	std::printf("%s\n", msg.c_str());
+template<typename T>
+void println(T && msg) {
+	std::cout << msg << std::endl;
 }
 
 struct Point : public TinyGC::GCObject
@@ -12,8 +13,8 @@ struct Point : public TinyGC::GCObject
 		: x(x), y(y) {
 		println("New Point");
 	}
-	Point(const Point &another)
-		: x(another.x), y(another.y) {
+	Point(const Point *another)
+		: x(another->x), y(another->y) {
 		println("New Point");
 	}
 	~Point() {
@@ -27,10 +28,7 @@ struct Point : public TinyGC::GCObject
 	TinyGC::GCValue<int> *x, *y;
 
 protected:
-	void GCMarkAllSub() override  {
-		GCMarkSub(x);
-		GCMarkSub(y);
-	}
+	GCOBJECT(Point, TinyGC::GCObject, x, y)
 };
 
 struct DoublePoint : public TinyGC::GCObject
@@ -50,16 +48,13 @@ struct DoublePoint : public TinyGC::GCObject
 	Point *p0, *p1;
 
 protected:
-	void GCMarkAllSub() override {
-		GCMarkSub(p0);
-		GCMarkSub(p1);
-	}
+	GCOBJECT(DoublePoint, TinyGC::GCObject, p0, p1)
 };
 
 struct AnotherDoublePoint : public Point
 {
 	AnotherDoublePoint(Point *p0, Point *p1)
-		: Point(*p0), p1(p1) {
+		: Point(p0), p1(p1) {
 		println("New AnotherDoublePoint");
 	}
 	~AnotherDoublePoint() {
@@ -73,10 +68,7 @@ struct AnotherDoublePoint : public Point
 	Point *p1;
 
 protected:
-	void GCMarkAllSub() override {
-		Point::GCMarkAllSub();
-		GCMarkSub(p1);
-	}
+	GCOBJECT(AnotherDoublePoint, Point, p1)
 };
 
 struct Test
@@ -115,16 +107,14 @@ int main(void)
 			p1 = nullptr;
 			p2 = nullptr;
 			p3 = nullptr;
-			if (p3 == nullptr) {
-				println("GC Start");
-				GC.collect();
-				println("GC End");
+
+			if(GC.checkPoint()){
+				println("GC triggerred");
 			}
 		}
-
-		println("GC Start");
-		GC.collect();
-		println("GC End");
+		if(GC.checkPoint()){
+			println("GC triggerred");
+		}
 	}
 	return 0;
 }
