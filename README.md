@@ -23,14 +23,14 @@ Java:
 ```Java
 class Point
 {
-    Point(int x, int y) {
+    Point(Integer x, Integer y) {
         this.x = x;
         this.y = y;
     }
-    int x, y;
+    Integer x, y;
 }
 
-Point p = new Point(5, 6);
+Point p = new Point(5, 6);  // implicitly boxing
 ```
 
 C++ with TinyGC:
@@ -38,18 +38,15 @@ C++ with TinyGC:
 ```C++
 class Point : public TinyGC::GCObject
 {
-    using Int = TinyGC::GCValue<int>*;
+    using Integer = TinyGC::GCValue<int>*;
 public:
-    Point(Int x, Int y)
+    Point(Integer x, Integer y)
         : x(x), y(y) {}
     
-    Int x, y;
+    Integer x, y;
 
 private:
-    void GCMarkAllSub() override {
-        GCMarkSub(x);
-        GCMarkSub(y);
-    }
+    GCOBJECT(Point, TinyGC::GCObject, x, y)
 }
 
 int main()
