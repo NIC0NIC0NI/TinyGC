@@ -43,42 +43,44 @@ namespace TinyGC
 		GCObject() : _mark(false) {}
 		virtual ~GCObject() {}
 
-	protected:
-		static void GCMarkOneSubChecked(GCObject* sub) {
+	private:
+		GCObject *_next;
+		bool _mark;
+
+		friend class GC;
+
+		void GCMark() {
+			if (!this->_mark) {
+				this->_mark = true;
+				this->GCMarkAllSub();
+			}
+		}
+		static void GCMarkSubHelper1(GCObject* sub) {  // check nullptr
 			if(sub != nullptr){
 				sub->GCMark();
 			}
 		}
 		template<typename T>
-		static void GCMarkOneSub(T* sub) {
+		static void GCMarkSubHelper2(T* sub) {  // check type
 			CHECK_GCOBJECT_TYPE(T);
-			GCMarkOneSubChecked(const_cast<typename std::remove_cv<T>::type*>(sub));
+			GCMarkSubHelper1(const_cast<typename std::remove_cv<T>::type*>(sub));
 		}
+	
+	protected:
 		template<typename ... T>
 		static void GCMarkSub(T *... sub) {
-			auto forceEvaluate = { (GCMarkOneSub<T>(sub), 0) ... };
+			auto forceEvaluate = { (GCMarkSubHelper2<T>(sub), 0) ... };
 		}
 
 		virtual void GCMarkAllSub() {}
 
 #define GCOBJECT(Type, Base, ...) \
 		void GCMarkAllSub() override { \
+			static_assert(std::is_base_of<Base, Type>::value, \
+				#Type" is not a subclass of "#Base); \
 			Base::GCMarkAllSub();\
 			GCMarkSub(__VA_ARGS__);\
 		}
-
-	private:
-		void GCMark() {
-			if (!this->_mark) {
-				this->_mark = true;
-				GCMarkAllSub();
-			}
-		}
-
-		GCObject *_next;
-		bool _mark;
-
-		friend class GC;
 	};
 
 	//===================================
