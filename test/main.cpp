@@ -1,120 +1,137 @@
 #include <iostream>
 #include <string>
-#include "../tinygc/tinygc.h"
+#include "tinygc.h"
 
 template<typename T>
 void println(T && msg) {
-	std::cout << msg << std::endl;
+    std::cout << msg << std::endl;
 }
 
 struct Point : public TinyGC::GCObject
 {
-	Point(TinyGC::GCValue<int> *x, TinyGC::GCValue<int> *y)
-		: x(x), y(y) {
-		println("New Point");
-	}
-	Point(const Point *another)
-		: x(another->x), y(another->y) {
-		println("New Point");
-	}
-	~Point() {
-		println("Release Point");
-	}
+    Point(TinyGC::GCValue<int> *x, TinyGC::GCValue<int> *y)
+        : x(x), y(y) {
+        println("New Point " + to_string());
+    }
+    Point(const Point *another)
+        : x(another->x), y(another->y) {
+        println("New Point " + to_string());
+    }
+    ~Point() {
+        println("Delete Point");
+    }
 
-	std::string to_string() const {
-		return "(" + std::to_string(*x) + ", " + std::to_string(*y) + ")";
-	}
+    std::string to_string() const {
+        return "(" + std::to_string(*x) + ", " + std::to_string(*y) + ")";
+    }
 
-	TinyGC::GCValue<int> *x, *y;
-
-protected:
-	GCOBJECT(Point, TinyGC::GCObject, x, y)
-};
-
-struct DoublePoint : public TinyGC::GCObject
-{
-	DoublePoint(Point *p0, Point *p1)
-		: p0(p0), p1(p1) {
-		println("New DoublePoint");
-	}
-	~DoublePoint() {
-		println("Release DoublePoint");
-	}
-
-	std::string to_string() const {
-		return "(" + p0->to_string() + ", " + p1->to_string() + ")";
-	}
-
-	Point *p0, *p1;
+    TinyGC::GCValue<int> *x, *y;
 
 protected:
-	GCOBJECT(DoublePoint, TinyGC::GCObject, p0, p1)
+    GCOBJECT(Point, TinyGC::GCObject, x, y)
 };
 
-struct AnotherDoublePoint : public Point
+struct LineSegment : public TinyGC::GCObject
 {
-	AnotherDoublePoint(Point *p0, Point *p1)
-		: Point(p0), p1(p1) {
-		println("New AnotherDoublePoint");
-	}
-	~AnotherDoublePoint() {
-		println("Release AnotherDoublePoint");
-	}
+    LineSegment(Point *p0, Point *p1)
+        : p0(p0), p1(p1) {
+        println("New LineSegment " + to_string());
+    }
+    ~LineSegment() {
+        println("Delete LineSegment");
+    }
 
-	std::string to_string() const {
-		return "(" + Point::to_string() + ", " + p1->to_string() + ")";
-	}
+    std::string to_string() const {
+        return "(" + p0->to_string() + ", " + p1->to_string() + ")";
+    }
 
-	Point *p1;
+    Point *p0, *p1;
 
 protected:
-	GCOBJECT(AnotherDoublePoint, Point, p1)
+    GCOBJECT(LineSegment, TinyGC::GCObject, p0, p1)
 };
 
-struct Test
+struct AnotherLineSegment : public Point
 {
-	Test() {
-		println("New Test");
-	}
-	~Test() {
-		println("Release Test");
-	}
+    AnotherLineSegment(Point *p0, Point *p1)
+        : Point(p0), p1(p1) {
+        println("New AnotherLineSegment " + to_string());
+    }
+    ~AnotherLineSegment() {
+        println("Delete AnotherLineSegment");
+    }
+
+    std::string to_string() const {
+        return "(" + Point::to_string() + ", " + p1->to_string() + ")";
+    }
+
+    Point *p1;
+
+protected:
+    GCOBJECT(AnotherLineSegment, Point, p1)
 };
 
-TinyGC::GCRootPtr<Point> make_point(TinyGC::GC &GC, int x, int y) {
-	return GC.newObject<Point>(
-			GC.newValue<int>(x),
-			GC.newValue<int>(y));
+struct PODPoint {
+	int x, y;
+    PODPoint(int xx, int yy): x(xx), y(yy) {}
+    std::string to_string() const {
+        return "(" + std::to_string(x) + ", " + std::to_string(y) + ")";
+    }
+};
+
+struct PODLineSegment {
+	PODPoint p0, p1;
+    PODLineSegment(const PODPoint &pp0, const PODPoint &pp1): p0(pp0), p1(pp1) {
+        println("New PODLineSegment " + to_string());
+    }
+    ~PODLineSegment() {
+        println("Delete PODLineSegment");
+    }
+    std::string to_string() const {
+        return "(" + p0.to_string() + ", " + p1.to_string() + ")";
+    }
+};
+
+
+TinyGC::GCRootPtr<Point> make_point(TinyGC::GarbageCollector &GarbageCollector, int x, int y) {
+    return GarbageCollector.newObject<Point>(
+            GarbageCollector.newValue<int>(x),
+            GarbageCollector.newValue<int>(y));
 }
 
 int main(void)
 {
-	{
-		TinyGC::GC GC;
+    {
+        TinyGC::GarbageCollector GarbageCollector;
 
-		auto p1 = make_point(GC, 1, 2);
-		auto p2 = make_point(GC, 3, 4);
-		auto p3 = make_point(GC, 5, 6);
+        auto p1 = make_point(GarbageCollector, 1, 2);
+        auto p2 = make_point(GarbageCollector, 3, 4);
+        auto p3 = make_point(GarbageCollector, 5, 6);
 
-		auto dp = GC.newObject<DoublePoint>(p1, p2);
+        auto dp = TinyGC::make_root_ptr(GarbageCollector.newObject<LineSegment>(p1, p2));
 
-		{
-			auto tdp = GC.newObject<AnotherDoublePoint>(p3, p1);
-			auto tdp2 = tdp;
-			{
-				auto ttdp = GC.newValue<Test>();
-			}
-			p1 = nullptr;
-			p2 = nullptr;
-			p3 = nullptr;
+        {
+            auto tdp = TinyGC::make_root_ptr(GarbageCollector.newObject<AnotherLineSegment>(p3, p1));
+            auto tdp2 = tdp;
+            {
+                auto ttdp = TinyGC::make_root_ptr(GarbageCollector.newValue<PODLineSegment>(PODPoint(1, 3), PODPoint(2, 4)));
+            }
+            p1 = nullptr;
+            p2 = nullptr;
+            p3 = nullptr;
 
-			if(GC.checkPoint()){
-				println("GC triggerred");
-			}
-		}
-		if(GC.checkPoint()){
-			println("GC triggerred");
-		}
-	}
-	return 0;
+            if(GarbageCollector.checkPoint()){  // collect
+                println("Garbage Collector triggerred");
+            } else {
+                println("Garbage Collector not triggerred");
+            } 
+        }
+        if(GarbageCollector.checkPoint()){
+            println("Garbage Collector triggerred");
+        } else {
+            println("Garbage Collector not triggerred");
+        } 
+    }
+	std::cout << sizeof(TinyGC::GCValue<int>) << std::endl;
+    return 0;
 }

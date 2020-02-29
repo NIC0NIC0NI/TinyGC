@@ -7,14 +7,16 @@
 - 准确式GC
 - 可控的垃圾回收
 - 不独占内存（内存占用小），与其他内存管理方式兼容
-- 允许拥有多个GC实例
+- 允许拥有多个 `GarbageCollector` 实例
+- 目前是线程不安全的，只能用于一个线程内
 
 ## 使用方法
 
-1. 创建 `TinyGC::GC` 对象。
-2. 使用 `newValue` 方法 创建相关的可回收的**不含**可回收对象的引用的对象。
-3. 使用 `newObject` 方法 创建相关的可回收的**含有**可回收对象的引用对象。
-4. 使用 `collect` 方法 进行垃圾回收。
+1. 创建 `TinyGC::GarbageCollector` 对象。
+2. 使用 `newObject` 方法 创建 `TinyGC::GCObject` 子类的可回收对象。
+3. 使用 `newValue` 方法 创建其它C++类的可回收对象。
+4. 使用 `TinyGC::make_root_ptr` 创建局部或静态的根引用。
+5. 使用 `collect` 方法 进行垃圾回收。
 
 ### 示例
 
@@ -51,12 +53,12 @@ private:
 
 int main()
 {
-    TinyGC::GC GC;
+    TinyGC::GarbageCollector GC;
     {
-        auto p = GC.newObject<Point>(
+        auto p = TinyGC::make_root_ptr(GC.newObject<Point>(
             GC.newValue<int>(5),
             GC.newValue<int>(6)
-        );
+        ));
     }
     GC.collect();
 }
@@ -65,11 +67,10 @@ int main()
 
 ## 备注
 
-- 对于TinyGC来说，`GC::newValue` 和 `GC::newObject` 是**唯一**正确的创建可回收对象的方式。
-- 资源是由`GC`对象独占的， `TinyGC::GC` 相当于高级别的 `std::unique_ptr` 指针组。
-- `Tiny::GC` 对象会在生命周期结束后自动回收所有对象，因此可在其他类的内部建立`GC`对象，用于管理类内的可回收资源。
-- `GC::newValue` 和 `GC::newObject`  方法会返回一个 `GCRootPtr` 智能指针，在整个生命周期内为根引用。
-
+- 对于TinyGC来说，`GarbageCollector::newValue` 和 `GarbageCollector::newObject` 是**唯一**正确的创建可回收对象的方式。
+- 资源所有权归 `GarbageCollector` 对象。该对象会在生命周期结束后自动回收所有对象，因此可在函数作用域内建立 `TinyGC::GarbageCollector` 对象，作为其它类的成员，或作为`thread_local`
+- `make_root_ptr` 会返回一个 `GCRootPtr` 智能指针，在整个生命周期内为根引用。
+- `GCObject` 占用空间由三个指针构成：虚函数表指针、下一个 `GCObject` 对象指针，以及 `GarbageCollector` 对象指针，在标记被引用的对象时，标记位压缩在指针的最低位。`GCRootPtr`占用空间由三个指针构成，指向 `GCObject` 的指针，以及指向上一个和下一个 `GCRootPtr` 的指针。
 
 ## 许可
 

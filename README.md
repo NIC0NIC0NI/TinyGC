@@ -7,14 +7,16 @@ A **light-weighted GC** in C++ (C++11) based on **mark-and-sweep** algorithm.
 - Accurate GC
 - Controllable collection
 - Low memory consumption, compatible with other memory managements 
-- Allow multiple instances of GC
+- Allow multiple instances of `GarbageCollector`
+- Not thread-safe for now. Use it in a single thread
 
 ## Use
 
-1. Create `TinyGC::GC` object.
-2. Call `newValue` method to create collectable object.
-3. Call `newObject` method to create collectable object whose type is a subclass of `GCObject`.
-4. Call `collect` to collect garbage.
+1. Create `TinyGC::GarbageCollector` object.
+2. Call `newObject` method of `TinyGC::GarbageCollector` to create collectable object whose type is a subclass of `GCObject`.
+3. Call `newValue` method of `TinyGC::GarbageCollector` to create collectable object of other C++ classes.
+4. Call `TinyGC::make_root_ptr` create a root pointer as a local or static variable.
+5. Call `collect` method of `TinyGC::GarbageCollector` to collect garbage.
 
 ### Examples
 
@@ -51,12 +53,12 @@ private:
 
 int main()
 {
-    TinyGC::GC GC;
+    TinyGC::GarbageCollector GC;
     {
-        auto p = GC.newObject<Point>(
+        auto p = TinyGC::make_root_ptr(GC.newObject<Point>(
             GC.newValue<int>(5),
             GC.newValue<int>(6)
-        );
+        ));
     }
     GC.collect();
 }
@@ -64,10 +66,10 @@ int main()
 
 ## Note
 
-- For TinyGC, `GC::newValue` and `GC::newObject` is the **only** correct way to create collectable objects¡£
-- All the objects allocated by `GC` are owned by the `GC` object.
-- `GC` will release all resources once go out of scope, therefore can be used within a function, as a non-static menber of class or as thread local.
-- `GC::newValue` and `GC::newObject` returns a `GCRootPtr` smart pointer that would guarantee the object it points to will not be collected.
+- For TinyGC, `GarbageCollector::newValue` and `GarbageCollector::newObject` is the **only** correct way to create collectable objectsã€‚
+- All the objects allocated by `GarbageCollector` are owned by the `GarbageCollector` object. It will release all resources once go out of scope, therefore can be used within a function, as a non-static menber of class or as thread local.
+- `make_root_ptr` returns a `GCRootPtr` smart pointer that would guarantee the object it points to will not be collected.
+- The storage of `GCObject` is made up of three pointers: a pointer to virtual table, a pointer to the next `GCObject`, and a pointer to `GarbageCollector` who allocates it. While collecting garbage, the mark bit is compressed into the lowest bit of pointer. The storage of `GCRootPtr` is made up of three pointers, a pointer to `GCObject` and two pointers to the previous and next `GCRootPtr`.
 
 
 ## License
