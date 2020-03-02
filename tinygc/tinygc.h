@@ -1,7 +1,7 @@
 #ifndef _TINYGC_H_
 #define _TINYGC_H_
+#include <utility>
 #include <type_traits>
-#include <ostream>
 
 namespace TinyGC
 {
@@ -59,6 +59,8 @@ namespace TinyGC
             GCMaster = IntAsGCMaster(GCMasterAsInt(GCMaster) & ~static_cast<intptr_t>(1));
         }
 
+        // When GC is triggered, free heap memory may be not enough
+        // Don't use manual stacks which may allocate memory
         void GCMark() {
             if (this->GCGetMark() == 0) {
                 this->GCSetMark();
@@ -204,7 +206,7 @@ namespace TinyGC
         bool checkPoint();
         ~GarbageCollector();
 
-        GarbageCollector() : objectListHead(nullptr), objectNum(0) {}
+        GarbageCollector() : objectNum(0) {}
 
         template <typename T, typename... Args>
         T* newObject(Args &&... args) {
@@ -221,13 +223,13 @@ namespace TinyGC
         }
 
         void addRoot(details::GCRootPtrBase* p) {
-            p->insert_into(&rootListHead, rootListHead.next);
+            p->insert_into(&listHead, listHead.next);
         }
 
     private:
         void addObject(GCObject *p) {
-            p->GCNextObject = objectListHead;
-            objectListHead = p;
+            p->GCNextObject = listHead.ptr;
+            listHead.ptr = p;
             ++objectNum;
         }
 
@@ -242,9 +244,10 @@ namespace TinyGC
             delete obj;
         }
 
-        GCObject* objectListHead;
+        // The object `listHead` is the head of root pointers
+        // The object `listHead.ptr` points to is the head of all objects;
+        details::GCRootPtrBase listHead; 
         std::size_t objectNum;
-        details::GCRootPtrBase rootListHead;
 
         GCStatistics lastGC;
 
@@ -333,12 +336,6 @@ namespace TinyGC
     template<typename T>
     GCRootPtr<T> make_root_ptr(T *ptr) {
         return ptr;
-    }
-
-    template<typename ObjectType, typename CharT, typename Traits>
-    std::basic_ostream<CharT, Traits>&
-    operator<<( std::basic_ostream<CharT, Traits>& out, const GCRootPtr<ObjectType>& p) {
-        return out << (*p);
     }
 
 #define DEFINE_OPERATOR(type, op) \

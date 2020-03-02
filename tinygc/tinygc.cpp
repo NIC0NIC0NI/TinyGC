@@ -4,6 +4,7 @@
 namespace TinyGC
 {
     GarbageCollector::~GarbageCollector() {
+        auto objectListHead = listHead.ptr;
         for(auto p = objectListHead; p != nullptr;) {
             auto next = p->GCNextObject;
             destroyObject(p);
@@ -12,8 +13,8 @@ namespace TinyGC
     }
 
     void GarbageCollector::mark() {
-        auto end = &rootListHead;
-        for(auto i = rootListHead.next; i != end; i = i->next) {
+        auto end = &listHead;
+        for(auto i = listHead.next; i != end; i = i->next) {
             auto root_obj = i->ptr;
             if(root_obj != nullptr) {
                 root_obj->GCMark();
@@ -22,6 +23,7 @@ namespace TinyGC
     }
 
     void GarbageCollector::sweep() {
+        auto objectListHead = listHead.ptr;
         auto prev = objectListHead;
         if(prev != nullptr) {
             for(auto curr = prev->GCNextObject; curr != nullptr; ) {
@@ -42,6 +44,7 @@ namespace TinyGC
             } else {
                 auto temp = objectListHead->GCNextObject;
                 destroyObject(objectListHead);
+                --objectNum;
                 objectListHead = temp;
             }
         }
