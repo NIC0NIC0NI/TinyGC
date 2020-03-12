@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <vector>
 #include "tinygc.h"
 
 template<typename T>
@@ -34,7 +35,7 @@ protected:
 struct LineSegment : public TinyGC::GCObject
 {
     LineSegment(Point *p0, Point *p1)
-        : p0(p0), p1(p1) {
+        : p0(p0), p1(*p1) {
         println("New LineSegment " + to_string());
     }
     ~LineSegment() {
@@ -42,13 +43,14 @@ struct LineSegment : public TinyGC::GCObject
     }
 
     std::string to_string() const {
-        return "(" + p0->to_string() + ", " + p1->to_string() + ")";
+        return "(" + p0->to_string() + ", " + p1.to_string() + ")";
     }
 
-    Point *p0, *p1;
+    Point *p0;
+    Point &p1;
 
 protected:
-    GCOBJECT(LineSegment, TinyGC::GCObject, p0, p1)
+    GCOBJECT(LineSegment, TinyGC::GCObject, p0, std::addressof(p1)) // take address of reference
 };
 
 struct AnotherLineSegment : public Point
@@ -68,7 +70,7 @@ struct AnotherLineSegment : public Point
     Point *p1;
 
 protected:
-    GCOBJECT(AnotherLineSegment, Point, p1)
+    GCOBJECT(AnotherLineSegment, Point, p1) // Tag the base class Point
 };
 
 struct PODPoint {
@@ -92,46 +94,130 @@ struct PODLineSegment {
     }
 };
 
+struct CircularRef : public TinyGC::GCObject {
+    CircularRef *first;
+    CircularRef *second;
+    CircularRef(CircularRef *f = nullptr, CircularRef *s = nullptr) : first(f), second(s) {
+        println("New CircularRef");
+    }
+    ~CircularRef() {
+        println("Delete CircularRef");
+    }
+protected:
+    GCOBJECT(CircularRef, TinyGC::GCObject, first, second)
+};
 
-TinyGC::GCRootPtr<Point> make_point(TinyGC::GarbageCollector &GarbageCollector, int x, int y) {
-    return GarbageCollector.newObject<Point>(
-            GarbageCollector.newValue<int>(x),
-            GarbageCollector.newValue<int>(y));
+
+//===================================
+// * Point -> x (GCValue<int>)
+// *       -> y (GCValue<int>)
+// * LineSegment -> p0 (Point)
+// *             -> p1 (Point)
+// * AnotherLineSegment : Point -> x (GCValue<int>)
+// *                            -> y (GCValue<int>)
+// *                            -> p1 (Point)
+// * CircularRef -> first  (CircularRef)
+// *             -> second (CircularRef)
+// *
+// * PODPoint and PODLineSegment are POD
+//===================================
+
+CircularRef* create_circular_ref(TinyGC::GarbageCollector &gc) {
+    // these will be discarded
+    auto x = gc.newObject<CircularRef>();
+    auto y = gc.newObject<CircularRef>(x);
+    auto z = gc.newObject<CircularRef>(x, y);
+    x->first = y;
+    x->second = z;
+    y->second = z;
+    return x;
 }
 
-int main(void)
+template<typename C, typename ... Args>
+TinyGC::GCRootPtr<TinyGC::GCContainer<C>> make_root_container(TinyGC::GarbageCollector &gc, Args && ... args) {
+    auto il = {args ... };
+    return gc.newContainer<C>(il);
+}
+
+Point* make_point(TinyGC::GarbageCollector &gc, int x, int y) {
+    return gc.newObject<Point>(gc.newValue<int>(x), gc.newValue<int>(y));
+}
+
+TinyGC::GCRootPtr<Point> make_root_point(TinyGC::GarbageCollector &gc, int x, int y) {
+    return make_point(gc, x, y);
+}
+
+int main(int argc, char **argv)
 {
+    using TinyGC::GCRootPtr;
+    using TinyGC::GCObject;
+    using TinyGC::GCValue;
+    using TinyGC::make_root_ptr;
     {
-        TinyGC::GarbageCollector GarbageCollector;
+        TinyGC::GarbageCollector gc;
 
-        auto p1 = make_point(GarbageCollector, 1, 2);
-        auto p2 = make_point(GarbageCollector, 3, 4);
-        auto p3 = make_point(GarbageCollector, 5, 6);
+        // GCRootPtr<int> x = gc.newValue<int>(100);
+        GCRootPtr<GCValue<int>> x = gc.newValue<int>(100);
 
-        auto dp = TinyGC::make_root_ptr(GarbageCollector.newObject<LineSegment>(p1, p2));
+        auto p1 = make_root_point(gc, 1, 2);
+        auto p2 = make_root_point(gc, 3, 4);
+        auto p3 = make_root_point(gc, 5, 6);
+        auto p4 = make_root_ptr(gc.newObject<Point>(p1->y, p3->x));
+        auto p5 = make_root_ptr(gc.newObject<Point>(p2->x, x));
+
+        auto l1 = make_root_ptr(gc.newObject<LineSegment>(p1, p2));
+        auto l2 = make_root_ptr(gc.newObject<LineSegment>(p5, p3));
+        auto l3 = make_root_ptr(gc.newObject<AnotherLineSegment>(p3, p1));     // copies point p3
+
+        auto vector = make_root_container<std::vector<Point*>>(gc, 
+            make_point(gc, 200, 201), make_point(gc, 215, 261), make_point(gc, 268, 237),
+            make_point(gc, 205, 207), make_point(gc, 210, 271), make_point(gc, 240, 206));
+
+        create_circular_ref(gc); // discarded
+        auto circular = make_root_ptr(create_circular_ref(gc));
 
         {
-            auto tdp = TinyGC::make_root_ptr(GarbageCollector.newObject<AnotherLineSegment>(p3, p1));
-            auto tdp2 = tdp;
-            {
-                auto ttdp = TinyGC::make_root_ptr(GarbageCollector.newValue<PODLineSegment>(PODPoint(1, 3), PODPoint(2, 4)));
-            }
-            p1 = nullptr;
-            p2 = nullptr;
-            p3 = nullptr;
+            GCRootPtr<GCObject> obj = \
+                gc.newObject<AnotherLineSegment>(make_point(gc, 7, 8), make_point(gc, 9, 10));
+            auto pod = make_root_ptr(gc.newValue<PODLineSegment>(PODPoint(1, 3), PODPoint(2, 4)));
 
-            if(GarbageCollector.checkPoint()){  // collect
+
+            // loss reachability to l1, p2, p4, vector[4], vector[5], obj, obj->p0, obj->p1
+            p1 = nullptr;
+            p2 = p5;
+            p4 = l2->p0;
+            l1 = nullptr;
+            obj = p5;
+            p3 = l3;
+            p5 = nullptr;
+
+            vector->get().pop_back();
+            vector->get().pop_back();
+
+            // should delete original not_a_root, l1, p2, p4, vector[4], vector[5], obj, obj::base, obj->p0, obj->p1
+            if(gc.checkPoint()){  // collect
                 println("Garbage Collector triggerred");
             } else {
                 println("Garbage Collector not triggerred");
             } 
+            println("l3 = " + l2->to_string());
+            println("l3 = " + l3->to_string());
+            println("pod = " + pod->get().to_string());
+            println("vector:");
+            int i = 0;
+            for(auto p : vector->get()) {
+                println("[" + std::to_string(i++) + "] = " + p->to_string());
+            }
         }
-        if(GarbageCollector.checkPoint()){
+        if(gc.checkPoint()){
             println("Garbage Collector triggerred");
         } else {
             println("Garbage Collector not triggerred");
         } 
+
+        println("p2 = " + p2->to_string());
+        println("p3 = " + p3->to_string());  // to_string is not virtual
+        println("p4 = " + p4->to_string());
     }
-	std::cout << sizeof(TinyGC::GCValue<int>) << std::endl;
     return 0;
 }

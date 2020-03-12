@@ -11,6 +11,7 @@ namespace TinyGC
     class GCObject;
     template <typename T>
     class GCValue;
+    class GCReachableSet;
     class GarbageCollector;
     template <typename Ty>
     class GCRootPtr;
@@ -30,12 +31,38 @@ namespace TinyGC
     static_assert(std::is_base_of<GCObject, Type>::value, \
                 #Type" is not a subclass of GCObject")
 
-    inline intptr_t GCMasterAsInt(GarbageCollector *master) noexcept {
-        return reinterpret_cast<intptr_t>(master);
-    }
-    inline GarbageCollector* IntAsGCMaster(intptr_t master) noexcept {
-        return reinterpret_cast<GarbageCollector *>(master);
-    }
+    //===================================
+    // * Class GCMarker
+    //===================================
+    class GCMarker {
+        enum { MaxSize = 1024 };
+        GCObject* objects[MaxSize];
+        std::size_t size;
+
+        void clearStack();
+        void markOneObject(GCObject* object);
+        friend class GarbageCollector;
+    public:
+        GCMarker() : size(0) {}
+
+        template<typename T>
+        inline void markObject(T* sub) {
+            CHECK_GCOBJECT_TYPE(T);  // check type
+            markOneObject(static_cast<GCObject*>(const_cast<typename std::remove_cv<T>::type*>(sub)));
+        }
+        
+        template<typename ... T>
+        inline void markObjects(T *... sub) {
+            auto forceEvaluate = { (markObject<T>(sub), 0) ... };
+        }
+
+        template<typename Iter>
+        inline void markRange(Iter begin, Iter end) {
+            for(; begin != end; ++begin) {
+                markObject(*begin);
+            }
+        }
+    };
 
     //===================================
     // * Class GCObject
@@ -45,59 +72,17 @@ namespace TinyGC
         GCObject *GCNextObject;      // this field may be modified
         GarbageCollector *GCMaster;  // this field is not modified after construction, compressed with mark
 
-        friend class GarbageCollector;        
-
-        intptr_t GCGetMark() const noexcept {
-            return GCMasterAsInt(GCMaster) & static_cast<intptr_t>(1);
-        }
-
-        void GCSetMark() {
-            GCMaster = IntAsGCMaster(GCMasterAsInt(GCMaster) | static_cast<intptr_t>(1));
-        }
-
-        void GCClearMark() {
-            GCMaster = IntAsGCMaster(GCMasterAsInt(GCMaster) & ~static_cast<intptr_t>(1));
-        }
-
-        // When GC is triggered, free heap memory may be not enough
-        // Don't use manual stacks which may allocate memory
-        void GCMark() {
-            if (this->GCGetMark() == 0) {
-                this->GCSetMark();
-                this->GCMarkAllChildren();
-            }
-        }
-        
-        template<typename T>
-        static inline void GCMark1Child(T* sub) {
-            CHECK_GCOBJECT_TYPE(T);  // check type
-            GCObject* p = static_cast<GCObject*>(const_cast<typename std::remove_cv<T>::type*>(sub));
-            if(p != nullptr){  // check nullptr
-                p->GCMark();
-            }
-        }
-    
+        friend class GarbageCollector;
+        friend class GCMarker;
     protected:
-        template<typename ... T>
-        static inline void GCMarkMultiple(T *... sub) {
-            auto forceEvaluate = { (GCMark1Child<T>(sub), 0) ... };
-        }
-
-        template<typename Iter>
-        static inline void GCMarkRange(Iter begin, Iter end) {
-            for(; begin != end; ++begin) {
-                GCMark1Child(*begin);
-            }
-        }
-
-        virtual void GCMarkAllChildren() {}
+        virtual void GCMarkAllChildren(GCMarker &marker) {}
 
 #define GCOBJECT(Type, Base, ...) \
-        void GCMarkAllChildren() override { \
+        void GCMarkAllChildren(TinyGC::GCMarker &marker) override { \
             static_assert(std::is_base_of<Base, Type>::value, \
                 #Type" is not a subclass of "#Base); \
-            Base::GCMarkAllChildren();\
-            GCMarkMultiple(__VA_ARGS__);\
+            Base::GCMarkAllChildren(marker);\
+            marker.markObjects(__VA_ARGS__);\
         }
     public:
         GCObject() : GCMaster(nullptr) {}
@@ -140,6 +125,27 @@ namespace TinyGC
 
     private:
         T data;
+    };
+
+    //===================================
+    // * Class GCContainer
+    //===================================
+    template <typename C>
+    class GCContainer : public GCValue<C> {
+    public:
+        template <typename... Args>
+        explicit GCContainer(Args &&... args)
+            : GCValue<C>(std::forward<Args>(args)...) {}
+
+        template<typename ArgType>
+        GCContainer& operator=(ArgType&& o) {
+            this->get() = std::forward<ArgType>(o);
+            return *this;
+        }
+
+        virtual void GCMarkAllChildren(GCMarker &marker) override {
+            marker.markRange(std::begin(this->get()), std::end(this->get()));
+        }
     };
 
     //===================================
@@ -221,6 +227,11 @@ namespace TinyGC
         GCValue<T> *newValue(Args &&... args) {
             return newObject<GCValue<T>>(std::forward<Args>(args)...);
         }
+        
+        template <typename C, typename... Args>
+        GCContainer<C> *newContainer(Args &&... args) {
+            return newObject<GCContainer<C>>(std::forward<Args>(args)...);
+        }
 
         void addRoot(details::GCRootPtrBase* p) {
             p->insert_into(&listHead, listHead.next);
@@ -247,8 +258,8 @@ namespace TinyGC
         // The object `listHead` is the head of root pointers
         // The object `listHead.ptr` points to is the head of all objects;
         details::GCRootPtrBase listHead; 
-        std::size_t objectNum;
 
+        std::size_t objectNum;
         GCStatistics lastGC;
 
         void mark();
@@ -263,7 +274,7 @@ namespace TinyGC
     // * supposed to guarantee type safety
     //===================================
     template <typename Ty = GCObject>
-    class GCRootPtr: private details::GCRootPtrBase
+    class GCRootPtr: public details::GCRootPtrBase
     {
         CHECK_GCOBJECT_TYPE(Ty);
     public:
@@ -281,25 +292,21 @@ namespace TinyGC
             : GCRootPtrBase(gcrp) {
             CHECK_POINTER_CONVERTIBLE(Object, Ty);
         }
-        GCRootPtr(GCRootPtr<Ty> && gcrp)  noexcept
-            : GCRootPtrBase(std::move(gcrp)) {}
-
-        template <typename Object>
-        GCRootPtr(GCRootPtr<Object> && gcrp)  noexcept
-            : GCRootPtrBase(std::move(gcrp)) {
-            CHECK_POINTER_CONVERTIBLE(Object, Ty);
-        }
-
 
         GCRootPtr<Ty>& operator=(std::nullptr_t) noexcept {
             this->ptr = nullptr;
             return *this;
         }
 
+        GCRootPtr<Ty>& operator=(const GCRootPtr<Ty> & gcrp) noexcept {
+            this->ptr = gcrp.get();
+            return *this;
+        }
+
         template <typename Object>
         GCRootPtr<Ty>& operator=(const GCRootPtr<Object> & gcrp) noexcept {
             CHECK_POINTER_CONVERTIBLE(Object, Ty);
-            this->ptr = gcrp.ptr;
+            this->ptr = gcrp.get();
             return *this;
         }
 
@@ -333,6 +340,7 @@ namespace TinyGC
     };
     
     // relies on compiler optimizations to eliminate copy
+    // recomment C++17 which guarantees no copy
     template<typename T>
     GCRootPtr<T> make_root_ptr(T *ptr) {
         return ptr;
